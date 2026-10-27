@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Kinematic Pose & Coordinate Frame Explorer</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: rgba(30, 41, 59, 0.9);
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: var(--text); overflow: hidden; height: 100vh; width: 100vw; display: flex; }
+    #canvas-container { flex: 1; position: relative; height: 100%; }
+    
+    /* Control & HUD Sidebar */
+    #sidebar {
+      width: 370px;
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      border-left: 1px solid var(--border);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      z-index: 10;
+    }
+    h1 { font-size: 1rem; font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
+    h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+    
+    .control-group { display: flex; flex-direction: column; gap: 8px; }
+    .slider-row { display: flex; flex-direction: column; gap: 3px; }
+    .slider-header { display: flex; justify-content: space-between; font-size: 0.8rem; }
+    .slider-val { font-family: monospace; color: var(--accent); font-weight: 600; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    
+    .preset-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+    button {
+      background: #1e293b; color: var(--text); border: 1px solid var(--border);
+      padding: 7px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; transition: 0.15s;
+    }
+    button:hover { background: #334155; border-color: var(--accent); }
+    
+    /* Matrix Readout */
+    .matrix-box {
+      background: #090d16; border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; font-family: monospace; font-size: 0.75rem; line-height: 1.5;
+    }
+    .matrix-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+      text-align: right; margin-top: 4px; color: #e2e8f0;
+    }
+    .legend {
+      position: absolute; bottom: 16px; left: 16px;
+      background: var(--panel); border: 1px solid var(--border);
+      padding: 10px 14px; border-radius: 8px; font-size: 0.78rem;
+      display: flex; gap: 14px; pointer-events: none;
+    }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  </style>
+  <!-- Load Three.js and OrbitControls via CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="canvas-container">
+    <div class="legend">
+      <div><span class="dot" style="background:#ef4444;"></span>+X Anterior</div>
+      <div><span class="dot" style="background:#22c55e;"></span>+Y Proximal / Up</div>
+      <div><span class="dot" style="background:#3b82f6;"></span>+Z Lateral (Right)</div>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <h1>3D Coordinate Frame & Pose Explorer</h1>
+
+    <div class="control-group">
+      <h2>1. Global Room Staging {G}</h2>
+      <div class="slider-row">
+        <div class="slider-header"><span>Global Heading (Yaw Y)</span><span id="val-yaw" class="slider-val">0°</span></div>
+        <input type="range" id="yaw" min="-90" max="90" value="0" step="1">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span>Global Anterior Offset (X)</span><span id="val-gx" class="slider-val">0.00 m</span></div>
+        <input type="range" id="gx" min="-0.5" max="0.5" value="0" step="0.02">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span>Hip Sagittal Flexion (Femur Z)</span><span id="val-hip" class="slider-val">15°</span></div>
+        <input type="range" id="hip" min="-20" max="60" value="15" step="1">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>2. Relative Knee Joint Pose (Cardan Z-X'-Y'')</h2>
+      <div class="slider-row">
+        <div class="slider-header"><span>Flexion / Extension (Z)</span><span id="val-kflex" class="slider-val">25°</span></div>
+        <input type="range" id="kflex" min="-10" max="120" value="25" step="1">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span>Varus / Valgus (X' Floating)</span><span id="val-kadd" class="slider-val">0°</span></div>
+        <input type="range" id="kadd" min="-20" max="20" value="0" step="1">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span>Internal / External Rot (Y'')</span><span id="val-krot" class="slider-val">0°</span></div>
+        <input type="range" id="krot" min="-30" max="30" value="0" step="1">
+      </div>
+
+      <div class="preset-row">
+        <button id="btn-tpose">Calibrated T-Pose (0°)</button>
+        <button id="btn-swing">Mid-Swing Preset</button>
+        <button id="btn-stance">Terminal Stance</button>
+        <button id="btn-crosstalk">Rotate Room +45°</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>Live Rotation Matrices</h2>
+      <div class="matrix-box">
+        <div style="color:#38bdf8; font-weight:600;">Relative Knee Matrix (<sup>Femur</sup>R<sub>Tibia</sub>)</div>
+        <div style="color:#94a3b8; font-size:0.68rem;">Invariant to Global Room Staging:</div>
+        <div id="mat-rel" class="matrix-grid"></div>
+      </div>
+
+      <div class="matrix-box">
+        <div style="color:#f43f5e; font-weight:600;">Global Tibia Matrix (<sup>Global</sup>R<sub>Tibia</sub>)</div>
+        <div style="color:#94a3b8; font-size:0.68rem;">Changes with Room Yaw & Hip Pose:</div>
+        <div id="mat-glob" class="matrix-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 20);
+    camera.position.set(1.4, 1.1, 1.6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.55, 0);
+    controls.update();
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(3, 5, 4);
+    scene.add(dirLight);
+
+    // Floor Grid & Global Frame {G}
+    const grid = new THREE.GridHelper(2.4, 12, 0x334155, 0x1e293b);
+    scene.add(grid);
+
+    function createRGBTriad(size = 0.18) {
+      const group = new THREE.Group();
+      const r = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), size, 0xef4444, size*0.22, size*0.12);
+      const g = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), size, 0x22c55e, size*0.22, size*0.12);
+      const b = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), size, 0x3b82f6, size*0.22, size*0.12);
+      group.add(r, g, b);
+      return group;
+    }
+
+    // Global Origin Triad {G}
+    const globalTriad = createRGBTriad(0.25);
+    globalTriad.position.set(0, 0.005, 0);
+    scene.add(globalTriad);
+
+    // Kinematic Hierarchy: HipRoot -> Femur {F} -> KneeJoint -> Tibia {T}
+    const femurLength = 0.42;
+    const tibiaLength = 0.40;
+
+    const hipRoot = new THREE.Group();
+    hipRoot.position.set(0, 0.90, 0);
+    scene.add(hipRoot);
+
+    // Femur Visual & Triad {F}
+    const femurTriad = createRGBTriad(0.16);
+    hipRoot.add(femurTriad);
+
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.3, metalness: 0.2, transparent: true, opacity: 0.85 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.2 });
+
+    const hipSphere = new THREE.Mesh(new THREE.SphereGeometry(0.032, 24, 24), jointMat);
+    hipRoot.add(hipSphere);
+
+    const femurMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.02, femurLength, 20), boneMat);
+    femurMesh.position.set(0, -femurLength / 2, 0);
+    hipRoot.add(femurMesh);
+
+    // Knee Center (Distal end of Femur)
+    const kneeNode = new THREE.Group();
+    kneeNode.position.set(0, -femurLength, 0);
+    hipRoot.add(kneeNode);
+
+    const kneeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.03, 24, 24), jointMat);
+    kneeNode.add(kneeSphere);
+
+    // Tibia Triad {T}
+    const tibiaTriad = createRGBTriad(0.16);
+    kneeNode.add(tibiaTriad);
+
+    const tibiaMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.015, tibiaLength, 20), boneMat);
+    tibiaMesh.position.set(0, -tibiaLength / 2, 0);
+    kneeNode.add(tibiaMesh);
+
+    // Foot segment for clear visual reference
+    const footMesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.06), boneMat);
+    footMesh.position.set(0.05, -tibiaLength, 0);
+    kneeNode.add(footMesh);
+
+    // UI Controls & Matrix Update Logic
+    const deg2rad = Math.PI / 180;
+    const inputs = ['yaw', 'gx', 'hip', 'kflex', 'kadd', 'krot'];
+    const els = Object.fromEntries(inputs.map(id => [id, document.getElementById(id)]));
+
+    function formatMatrix(m, targetId) {
+      const e = m.elements; // Column-major in Three.js
+      const rows = [
+        e[0], e[4], e[8],
+        e[1], e[5], e[9],
+        e[2], e[6], e[10]
+      ];
+      document.getElementById(targetId).innerHTML = rows
+        .map(v => `<span>${(Math.abs(v) < 1e-4 ? 0 : v).toFixed(2)}</span>`)
+        .join('');
+    }
+
+    function updateKinematics() {
+      const yaw = parseFloat(els.yaw.value);
+      const gx = parseFloat(els.gx.value);
+      const hip = parseFloat(els.hip.value);
+      const kflex = parseFloat(els.kflex.value);
+      const kadd = parseFloat(els.kadd.value);
+      const krot = parseFloat(els.krot.value);
+
+      document.getElementById('val-yaw').textContent = `${yaw}°`;
+      document.getElementById('val-gx').textContent = `${gx.toFixed(2)} m`;
+      document.getElementById('val-hip').textContent = `${hip}°`;
+      document.getElementById('val-kflex').textContent = `${kflex}°`;
+      document.getElementById('val-kadd').textContent = `${kadd}°`;
+      document.getElementById('val-krot').textContent = `${krot}°`;
+
+      // 1. Apply Global Staging & Femur Orientation
+      hipRoot.position.set(gx, 0.90, 0);
+      hipRoot.rotation.order = 'YZX';
+      hipRoot.rotation.set(0, yaw * deg2rad, hip * deg2rad);
+
+      // 2. Apply Relative Knee Cardan Sequence (Z - X' - Y'')
+      // Flexion is posterior (-Z rotation in ISB right-hand convention)
+      kneeNode.rotation.order = 'ZXY';
+      kneeNode.rotation.set(kadd * deg2rad, krot * deg2rad, -kflex * deg2rad);
+
+      hipRoot.updateMatrixWorld(true);
+
+      // Extract Relative Matrix (R_FT) and Global Tibia Matrix (R_GT)
+      const rRel = new THREE.Matrix4().extractRotation(kneeNode.matrix);
+      const rGlob = new THREE.Matrix4().extractRotation(kneeNode.matrixWorld);
+
+      formatMatrix(rRel, 'mat-rel');
+      formatMatrix(rGlob, 'mat-glob');
+    }
+
+    inputs.forEach(id => els[id].addEventListener('input', updateKinematics));
+
+    // Presets
+    document.getElementById('btn-tpose').onclick = () => {
+      els.yaw.value = 0; els.gx.value = 0; els.hip.value = 0;
+      els.kflex.value = 0; els.kadd.value = 0; els.krot.value = 0;
+      updateKinematics();
+    };
+    document.getElementById('btn-swing').onclick = () => {
+      els.hip.value = 25; els.kflex.value = 60; els.kadd.value = 2; els.krot.value = -5;
+      updateKinematics();
+    };
+    document.getElementById('btn-stance').onclick = () => {
+      els.hip.value = -10; els.kflex.value = 5; els.kadd.value = 0; els.krot.value = 8;
+      updateKinematics();
+    };
+    document.getElementById('btn-crosstalk').onclick = () => {
+      els.yaw.value = 45;
+      updateKinematics();
+    };
+
+    window.addEventListener('resize', () => {
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    updateKinematics();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
